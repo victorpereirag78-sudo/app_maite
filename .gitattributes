@@ -1,0 +1,23 @@
+# Normaliza los saltos de línea: en el repo siempre se guardan como LF,
+# en Windows se revisan como CRLF. Sin esto, abrir el proyecto desde otra
+# máquina marca todos los archivos como modificados sin haberlos tocado.
+* text=auto eol=lf
+
+# Archivos de texto del proyecto
+*.html  text
+*.css   text
+*.js    text
+*.json  text
+*.md    text
+*.svg   text
+
+# Binarios: que Git no toque su contenido
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.pdf   binary
