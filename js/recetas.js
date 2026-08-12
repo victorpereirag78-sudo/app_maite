@@ -32,6 +32,9 @@ function initRecetas() {
 function renderRecetaCard(receta, ingredientes) {
   const costo = calcularCostoReceta(receta, ingredientes);
   const unit  = receta.unidades > 0 ? costo / receta.unidades : 0;
+  const precio = receta.precioVenta || 0;
+  const margen = (precio > 0 && unit > 0) ? ((precio - unit) / unit) * 100 : null;
+  const stock  = Stock.disponible(receta.id);
 
   return `
     <div class="card" style="margin-bottom:1.2rem">
@@ -40,24 +43,39 @@ function renderRecetaCard(receta, ingredientes) {
           <h3 style="font-family:var(--font-display);font-weight:800;font-size:1.1rem">${Utils.escHtml(receta.nombre)}</h3>
           <p style="color:var(--text-muted);font-size:0.85rem;margin-top:2px">${Utils.escHtml(receta.descripcion || '')}</p>
         </div>
-        <div style="display:flex;gap:0.5rem">
+        <div style="display:flex;gap:0.5rem;flex-wrap:wrap">
+          <button class="btn btn-sm btn-primary"   onclick="abrirFormProduccion('${receta.id}')">👩‍🍳 Producir</button>
           <button class="btn btn-sm btn-secondary" onclick="editarReceta('${receta.id}')">✏️ Editar</button>
           <button class="btn btn-sm btn-danger"    onclick="eliminarReceta('${receta.id}')">🗑 Eliminar</button>
         </div>
       </div>
 
-      <div style="display:flex;gap:1rem;flex-wrap:wrap;margin:0.9rem 0 0.75rem">
-        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:0.6rem 1rem;text-align:center">
+      <div class="receta-stats">
+        <div class="receta-stat">
           <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:var(--orange)">${receta.unidades}</div>
-          <div style="font-size:0.75rem;color:var(--text-muted)">Unidades</div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Un. por tanda</div>
         </div>
-        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:0.6rem 1rem;text-align:center">
+        <div class="receta-stat">
           <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:var(--pink)">${Utils.formatMoney(costo)}</div>
-          <div style="font-size:0.75rem;color:var(--text-muted)">Costo total</div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Costo tanda</div>
         </div>
-        <div style="background:var(--surface2);border-radius:var(--radius-sm);padding:0.6rem 1rem;text-align:center">
+        <div class="receta-stat">
           <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:var(--teal)">${Utils.formatMoney(unit)}</div>
           <div style="font-size:0.75rem;color:var(--text-muted)">Costo unitario</div>
+        </div>
+        <div class="receta-stat">
+          <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem">${precio > 0 ? Utils.formatMoney(precio) : '—'}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Precio venta</div>
+        </div>
+        <div class="receta-stat">
+          <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:${margen == null ? 'var(--text-muted)' : margen >= 30 ? 'var(--teal)' : '#ff4466'}">
+            ${margen == null ? '—' : Math.round(margen) + '%'}
+          </div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">Margen</div>
+        </div>
+        <div class="receta-stat">
+          <div style="font-family:var(--font-display);font-weight:900;font-size:1.2rem;color:${stock > 0 ? 'var(--teal)' : 'var(--text-muted)'}">${stock}</div>
+          <div style="font-size:0.75rem;color:var(--text-muted)">En stock</div>
         </div>
       </div>
 
@@ -96,9 +114,15 @@ function abrirFormReceta(id = null) {
       <label>Descripción (opcional)</label>
       <input type="text" id="recDesc" value="${Utils.escHtml(rec?.descripcion || '')}" placeholder="Descripción breve..." />
     </div>
-    <div class="form-group">
-      <label>Unidades producidas</label>
-      <input type="number" id="recUnidades" value="${rec?.unidades || 12}" min="1" />
+    <div class="form-row">
+      <div class="form-group">
+        <label>Unidades por tanda</label>
+        <input type="number" id="recUnidades" value="${rec?.unidades || 12}" min="1" oninput="renderIngListModal()" />
+      </div>
+      <div class="form-group">
+        <label>Precio de venta por unidad</label>
+        <input type="number" id="recPrecio" value="${rec?.precioVenta || ''}" min="0" step="0.01" placeholder="Ej: 1500" />
+      </div>
     </div>
 
     <div style="border-top:1px solid var(--border);padding-top:1rem;margin-top:0.5rem">
@@ -147,10 +171,15 @@ function renderIngListModal() {
     return s;
   }, 0);
   const preview = document.getElementById('recCostoPreview');
-  if (preview && costo > 0) {
-    preview.innerHTML = `💰 Costo estimado: <strong>${Utils.formatMoney(costo)}</strong> | Unitario: <strong>${Utils.formatMoney(costo / unidades)}</strong>`;
+  if (preview) {
+    // El else limpia el cartel: antes, al sacar todos los ingredientes,
+    // quedaba pegado el costo anterior.
+    preview.innerHTML = costo > 0
+      ? `💰 Costo estimado: <strong>${Utils.formatMoney(costo)}</strong> | Unitario: <strong>${Utils.formatMoney(costo / unidades)}</strong>`
+      : '';
   }
 }
+window.renderIngListModal = renderIngListModal;
 
 function agregarIngReceta() {
   const id   = document.getElementById('selIngId').value;
@@ -174,14 +203,15 @@ function guardarReceta(id) {
   const nombre    = document.getElementById('recNombre').value.trim();
   const descripcion = document.getElementById('recDesc').value.trim();
   const unidades  = parseInt(document.getElementById('recUnidades').value) || 1;
+  const precioVenta = parseFloat(document.getElementById('recPrecio').value) || 0;
   if (!nombre) { toast('El nombre es obligatorio', 'warning'); return; }
 
   const recetas = DB.get('recetas', []);
   if (id) {
     const idx = recetas.findIndex(r => r.id === id);
-    if (idx >= 0) recetas[idx] = { ...recetas[idx], nombre, descripcion, unidades, ingredientes: _recetaIng };
+    if (idx >= 0) recetas[idx] = { ...recetas[idx], nombre, descripcion, unidades, precioVenta, ingredientes: _recetaIng };
   } else {
-    recetas.push({ id: Utils.uid(), nombre, descripcion, unidades, ingredientes: _recetaIng });
+    recetas.push({ id: Utils.uid(), nombre, descripcion, unidades, precioVenta, ingredientes: _recetaIng });
   }
   DB.set('recetas', recetas);
   Modal.hide();
@@ -192,11 +222,20 @@ function guardarReceta(id) {
 function editarReceta(id) { abrirFormReceta(id); }
 
 function eliminarReceta(id) {
-  Modal.confirm('¿Eliminar esta receta?', () => {
-    DB.set('recetas', DB.get('recetas', []).filter(r => r.id !== id));
-    toast('Receta eliminada', 'info');
-    initRecetas();
-  });
+  const ventas = DB.get('ventas', []).filter(v => v.recetaId === id).length;
+  const stock  = Stock.disponible(id);
+  const avisos = [];
+  if (ventas) avisos.push(`tiene ${ventas} venta(s) registradas`);
+  if (stock > 0) avisos.push(`quedan ${stock} unidades en stock`);
+
+  Modal.confirm(
+    `¿Eliminar esta receta?${avisos.length ? ' Ojo: ' + avisos.join(' y ') + '. El historial se conserva, pero el producto deja de aparecer.' : ''}`,
+    () => {
+      DB.set('recetas', DB.get('recetas', []).filter(r => r.id !== id));
+      toast('Receta eliminada', 'info');
+      initRecetas();
+    }
+  );
 }
 
 window.abrirFormReceta = abrirFormReceta;

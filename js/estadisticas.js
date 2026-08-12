@@ -20,16 +20,13 @@ function initEstadisticas() {
   }
 
   // ── Ventas por mes (últimos 6 meses)
-  const meses = [];
-  for (let i = 5; i >= 0; i--) {
-    const d   = new Date();
-    d.setMonth(d.getMonth() - i);
+  const meses = Utils.ultimosMeses(6).map(d => {
     const key = Utils.monthKey(d);
     const lbl = d.toLocaleDateString('es-CL', { month: 'short', year:'2-digit' });
     const total = ventas.filter(v => Utils.monthKey(v.fecha) === key)
                         .reduce((s, v) => s + (v.total || 0), 0);
-    meses.push({ key, lbl, total });
-  }
+    return { key, lbl, total };
+  });
   html += renderBarras('Ventas por mes (últimos 6)', meses, 'total', 'lbl', ['#e8427d','#ff8c42','#ffd166','#06d6a0','#9b5de5','#4fc3f7']);
 
   // ── Productos más vendidos
@@ -83,7 +80,7 @@ function renderBarras(titulo, data, valKey, lblKey, colores) {
     return `
       <div class="bar-col">
         <span class="bar-val">${d[valKey] > 0 ? (d[valKey] > 9999 ? Utils.formatMoney(d[valKey]) : d[valKey]) : ''}</span>
-        <div class="bar" style="height:${h}%;background:${col}" title="${d[lblKey]}: ${d[valKey]}"></div>
+        <div class="bar" style="height:${h}%;background:${col}" title="${Utils.escHtml(d[lblKey])}: ${d[valKey]}"></div>
         <span class="bar-label" style="font-size:0.65rem;text-align:center;max-width:42px;word-break:break-word">${Utils.escHtml(d[lblKey])}</span>
       </div>
     `;
@@ -98,18 +95,15 @@ function renderBarras(titulo, data, valKey, lblKey, colores) {
 }
 
 function renderBalanceMensual(ventas, caja) {
-  const meses = [];
-  for (let i = 5; i >= 0; i--) {
-    const d   = new Date();
-    d.setMonth(d.getMonth() - i);
+  const meses = Utils.ultimosMeses(6).map(d => {
     const key = Utils.monthKey(d);
     const lbl = d.toLocaleDateString('es-CL', { month: 'short' });
     const ing  = caja.filter(c => c.tipo === 'ingreso' && Utils.monthKey(c.fecha) === key)
                      .reduce((s, c) => s + c.monto, 0);
     const eg   = caja.filter(c => c.tipo === 'egreso' && Utils.monthKey(c.fecha) === key)
                      .reduce((s, c) => s + c.monto, 0);
-    meses.push({ lbl, ing, eg, bal: ing - eg });
-  }
+    return { lbl, ing, eg, bal: ing - eg };
+  });
 
   const maxVal = Math.max(...meses.map(m => Math.max(m.ing, m.eg)), 1);
   const bars = meses.map(m => {

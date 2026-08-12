@@ -86,8 +86,14 @@ function initDashboard() {
     `;
   }
 
+  // Pedidos por entregar — lo primero que necesita ver a la mañana
+  html += renderPedidosProximos();
+
   // Gráfico de ventas últimos 7 días
   html += renderGrafico7Dias(ventas);
+
+  // Stock de producto terminado
+  html += renderStockTerminado();
 
   // Alertas stock
   if (stockCrit.length > 0) {
@@ -137,12 +143,77 @@ function initDashboard() {
   document.getElementById('moduleContainer').innerHTML = html;
 }
 
+function renderPedidosProximos() {
+  const hoy = Utils.today();
+  const abiertos = DB.get('pedidos', [])
+    .filter(p => p.estado !== 'entregado' && p.estado !== 'cancelado')
+    .sort((a, b) => (a.fechaEntrega || '').localeCompare(b.fechaEntrega || ''));
+
+  if (!abiertos.length) return '';
+
+  const urgentes = abiertos.filter(p => Utils.diasEntre(hoy, p.fechaEntrega) <= 2);
+  const mostrar  = (urgentes.length ? urgentes : abiertos).slice(0, 5);
+  const atrasados = abiertos.filter(p => Utils.diasEntre(hoy, p.fechaEntrega) < 0).length;
+
+  return `
+    <div class="card" style="margin-bottom:1.2rem">
+      <div class="card-title">
+        🎁 Pedidos por entregar
+        ${atrasados ? `<span class="badge badge-red">${atrasados} atrasado${atrasados === 1 ? '' : 's'}</span>` : ''}
+        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="Router.go('pedidos')">Ver todos</button>
+      </div>
+      <div class="table-wrap"><table>
+        <thead><tr><th>Entrega</th><th>Cliente</th><th>Total</th><th>Estado</th></tr></thead>
+        <tbody>
+          ${mostrar.map(p => {
+            const d = Utils.diasEntre(hoy, p.fechaEntrega);
+            const cuando = d < 0 ? `<span style="color:#ff4466;font-weight:700">atrasado</span>`
+                         : d === 0 ? `<span style="color:var(--orange);font-weight:700">hoy</span>`
+                         : d === 1 ? 'mañana' : `en ${d} días`;
+            return `<tr>
+              <td>${Utils.formatDate(p.fechaEntrega)}<br><span style="font-size:0.75rem">${cuando}</span></td>
+              <td><strong>${Utils.escHtml(nombreClientePedido(p))}</strong></td>
+              <td>${Utils.formatMoney(p.total)}</td>
+              <td>${badgeEstadoPedido(p.estado)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table></div>
+    </div>
+  `;
+}
+
+function renderStockTerminado() {
+  const recetas = DB.get('recetas', []);
+  if (!recetas.length) return '';
+
+  const filas = recetas.map(r => ({ nombre: r.nombre, id: r.id, disp: Stock.disponible(r.id) }));
+  const hayAlgo = filas.some(f => f.disp !== 0);
+  if (!hayAlgo) return '';
+
+  return `
+    <div class="card" style="margin-bottom:1.2rem">
+      <div class="card-title">
+        🍫 Stock listo para vender
+        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="Router.go('produccion')">Producir</button>
+      </div>
+      <div class="receta-stats" style="margin:0">
+        ${filas.map(f => `
+          <div class="receta-stat">
+            <div style="font-family:var(--font-display);font-weight:900;font-size:1.3rem;color:${f.disp > 0 ? 'var(--teal)' : f.disp < 0 ? '#ff4466' : 'var(--text-muted)'}">${f.disp}</div>
+            <div style="font-size:0.72rem;color:var(--text-muted)">${Utils.escHtml(f.nombre)}</div>
+          </div>`).join('')}
+      </div>
+    </div>
+  `;
+}
+
 function renderGrafico7Dias(ventas) {
   const dias = [];
+  const hoy = new Date();
   for (let i = 6; i >= 0; i--) {
-    const d  = new Date();
-    d.setDate(d.getDate() - i);
-    const key = d.toISOString().split('T')[0];
+    const d = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate() - i);
+    const key = Utils.toISODate(d);   // día local, no UTC
     const lbl = d.toLocaleDateString('es-CL', { weekday:'short' });
     const total = ventas.filter(v => v.fecha === key).reduce((s, v) => s + (v.total || 0), 0);
     dias.push({ key, lbl, total });

@@ -20,7 +20,14 @@ const DB = {
 
   set(k, v) {
     try { localStorage.setItem(this._key(k), JSON.stringify(v)); return true; }
-    catch { return false; }
+    catch (e) {
+      console.error('DB.set falló:', k, e);
+      // Antes fallaba en silencio: el toast decía "guardado ✅" y el dato se perdía.
+      if (typeof toast === 'function') {
+        toast('No se pudo guardar: el almacenamiento está lleno. Exportá un respaldo desde Reportes.', 'error', 9000);
+      }
+      return false;
+    }
   },
 
   remove(k) { localStorage.removeItem(this._key(k)); },
@@ -33,12 +40,19 @@ const DB = {
     ventas: [],
     caja: [],
     metas: [],
+    producciones: [],
+    ajustesStock: [],
+    clientes: [],
+    pedidos: [],
     config: {
       moneda: '$',
       negocio: 'Alfajores Maite ❤️',
       stockMinimo: 200
     }
   },
+
+  // Colecciones que se respaldan / restauran / borran en bloque
+  colecciones: ['ingredientes','compras','recetas','ventas','caja','metas','producciones','ajustesStock','clientes','pedidos'],
 
   init() {
     Object.entries(this.defaults).forEach(([k, v]) => {
@@ -56,12 +70,39 @@ const Utils = {
     return `${cfg.moneda}${(+n || 0).toLocaleString('es-CL')}`;
   },
 
-  formatDate(d) {
-    return new Date(d).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric' });
+  /**
+   * Convierte una fecha a Date en horario LOCAL.
+   * new Date('2026-08-10') se interpreta como medianoche UTC, y en Chile (UTC-4)
+   * eso retrocede al día 9. Por eso las fechas 'YYYY-MM-DD' se parsean a mano.
+   */
+  parseDate(d) {
+    if (d instanceof Date) return d;
+    if (typeof d === 'string') {
+      const m = d.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+      if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+    }
+    return new Date(d);
   },
 
+  /** Fecha → 'YYYY-MM-DD' usando el día LOCAL, no el UTC. */
+  toISODate(d) {
+    const dt = d ? this.parseDate(d) : new Date();
+    return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`;
+  },
+
+  formatDate(d) {
+    if (!d) return '—';
+    const dt = this.parseDate(d);
+    if (isNaN(dt)) return '—';
+    return dt.toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric' });
+  },
+
+  /**
+   * Día de hoy en horario local. Antes usaba toISOString() (UTC), así que
+   * después de las ~20:00 en Chile las ventas se guardaban con la fecha de mañana.
+   */
   today() {
-    return new Date().toISOString().split('T')[0];
+    return this.toISODate(new Date());
   },
 
   uid() {
@@ -69,19 +110,54 @@ const Utils = {
   },
 
   monthKey(d) {
-    const dt = d ? new Date(d) : new Date();
+    const dt = d ? this.parseDate(d) : new Date();
     return `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}`;
   },
 
+  /**
+   * Devuelve los últimos n meses, del más viejo al más nuevo.
+   * Se ancla al día 1 porque d.setMonth(d.getMonth()-i) sobre un día 29/30/31
+   * desborda al mes siguiente y se saltea meses enteros.
+   */
+  ultimosMeses(n) {
+    const hoy = new Date();
+    const out = [];
+    for (let i = n - 1; i >= 0; i--) {
+      out.push(new Date(hoy.getFullYear(), hoy.getMonth() - i, 1));
+    }
+    return out;
+  },
+
+  /** Días entre dos fechas (b - a), en días completos locales. */
+  diasEntre(a, b) {
+    const d1 = this.parseDate(a), d2 = this.parseDate(b);
+    return Math.round((new Date(d2.getFullYear(), d2.getMonth(), d2.getDate())
+                     - new Date(d1.getFullYear(), d1.getMonth(), d1.getDate())) / 86400000);
+  },
+
+  /**
+   * Escapa para HTML y para atributos. Escapa también comillas: sin eso,
+   * un nombre con " rompía los value="..." y truncaba el dato al editar.
+   * Usa ?? para no convertir el 0 en cadena vacía.
+   */
   escHtml(s) {
-    const d = document.createElement('div');
-    d.textContent = String(s || '');
-    return d.innerHTML;
+    return String(s ?? '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
   },
 
   getMonthName(key) {
     const [y, m] = key.split('-');
     return new Date(+y, +m-1, 1).toLocaleDateString('es-CL', { month:'long', year:'numeric' });
+  },
+
+  /** Evita que Excel interprete como fórmula un texto que empieza con = + - @ */
+  csvSafe(v) {
+    const s = String(v ?? '');
+    return /^[=+\-@\t\r]/.test(s) ? `'${s}` : s;
   }
 };
 
@@ -109,18 +185,114 @@ const Modal = {
     document.getElementById('modalBody').innerHTML = bodyHtml;
     document.getElementById('modalFooter').innerHTML = footerHtml;
     document.getElementById('modalBackdrop').classList.add('show');
+    // Foco en el primer campo para poder escribir sin tocar la pantalla
+    setTimeout(() => {
+      const first = document.querySelector('#modalBody input:not([readonly]), #modalBody select, #modalBody textarea');
+      if (first) first.focus();
+    }, 60);
   },
   hide() {
     document.getElementById('modalBackdrop').classList.remove('show');
   },
-  confirm(msg, onConfirm) {
+  isOpen() {
+    return document.getElementById('modalBackdrop').classList.contains('show');
+  },
+  confirm(msg, onConfirm, textoOk = 'Sí, confirmar') {
     this.show(
       '¿Confirmar acción?',
-      `<p style="font-size:1rem">${Utils.escHtml(msg)}</p>`,
+      `<p style="font-size:1rem;line-height:1.5">${Utils.escHtml(msg)}</p>`,
       `<button class="btn btn-secondary" onclick="Modal.hide()">Cancelar</button>
-       <button class="btn btn-danger" id="confirmOk">Sí, confirmar</button>`
+       <button class="btn btn-danger" id="confirmOk">${Utils.escHtml(textoOk)}</button>`
     );
     document.getElementById('confirmOk').onclick = () => { Modal.hide(); onConfirm(); };
+  }
+};
+
+// ─────────────────────────────────────────
+// CAJA — movimientos con trazabilidad
+// ─────────────────────────────────────────
+/**
+ * Los movimientos que genera el sistema (una venta, una compra, un abono)
+ * guardan origen + refId. Sin esa referencia, borrar una venta dejaba su
+ * ingreso en la caja para siempre y el balance quedaba inflado.
+ */
+const CajaDB = {
+  add({ tipo, concepto, monto, fecha, metodo = 'Efectivo', origen = 'manual', refId = null }) {
+    const caja = DB.get('caja', []);
+    const mov = { id: Utils.uid(), tipo, concepto, monto: +monto || 0, fecha, metodo, origen, refId };
+    caja.push(mov);
+    DB.set('caja', caja);
+    return mov;
+  },
+
+  /** Borra todos los movimientos generados por un registro. Devuelve cuántos borró. */
+  removeByRef(refId) {
+    if (!refId) return 0;
+    const caja = DB.get('caja', []);
+    const quedan = caja.filter(c => c.refId !== refId);
+    const borrados = caja.length - quedan.length;
+    if (borrados) DB.set('caja', quedan);
+    return borrados;
+  },
+
+  /** Movimientos de un registro concreto (para mostrar el detalle). */
+  byRef(refId) {
+    return DB.get('caja', []).filter(c => c.refId === refId);
+  }
+};
+
+// ─────────────────────────────────────────
+// STOCK DE PRODUCTO TERMINADO
+// ─────────────────────────────────────────
+/**
+ * No se guarda un contador (se desincroniza). Se calcula:
+ *   producido + ajustes manuales − vendido
+ * Así siempre cuadra con el historial y es auditable.
+ */
+const Stock = {
+  producido(recetaId) {
+    return DB.get('producciones', [])
+      .filter(p => p.recetaId === recetaId)
+      .reduce((s, p) => s + (p.unidades || 0), 0);
+  },
+
+  ajustado(recetaId) {
+    return DB.get('ajustesStock', [])
+      .filter(a => a.recetaId === recetaId)
+      .reduce((s, a) => s + (a.unidades || 0), 0);
+  },
+
+  vendido(recetaId) {
+    return DB.get('ventas', [])
+      .filter(v => v.recetaId === recetaId)
+      .reduce((s, v) => s + (v.cantidad || 0), 0);
+  },
+
+  disponible(recetaId) {
+    return this.producido(recetaId) + this.ajustado(recetaId) - this.vendido(recetaId);
+  },
+
+  /** Unidades ya comprometidas en pedidos que todavía no se entregaron. */
+  comprometido(recetaId) {
+    return DB.get('pedidos', [])
+      .filter(p => p.estado !== 'entregado' && p.estado !== 'cancelado')
+      .reduce((s, p) => s + (p.items || [])
+        .filter(it => it.recetaId === recetaId)
+        .reduce((s2, it) => s2 + (it.cantidad || 0), 0), 0);
+  },
+
+  libre(recetaId) {
+    return this.disponible(recetaId) - this.comprometido(recetaId);
+  },
+
+  resumen() {
+    return DB.get('recetas', []).map(r => ({
+      id: r.id,
+      nombre: r.nombre,
+      disponible: this.disponible(r.id),
+      comprometido: this.comprometido(r.id),
+      libre: this.libre(r.id)
+    }));
   }
 };
 
@@ -135,36 +307,72 @@ const Router = {
     this.modules[name] = initFn;
   },
 
+  titles: {
+    dashboard: '🏠 Inicio',
+    inventario: '📦 Inventario',
+    recetas: '📋 Recetas',
+    produccion: '👩‍🍳 Producción',
+    costos: '💰 Costos',
+    pedidos: '🎁 Pedidos',
+    clientes: '👥 Clientes',
+    ventas: '🛒 Ventas',
+    caja: '💵 Caja',
+    estadisticas: '📈 Estadísticas',
+    metas: '🎯 Metas',
+    reportes: '📄 Reportes'
+  },
+
   go(name) {
+    if (!this.titles[name]) name = 'dashboard';
     this.current = name;
+
+    // La URL refleja el módulo: el botón "atrás" del celular vuelve a la
+    // pantalla anterior en vez de cerrar la app.
+    if (location.hash.slice(1) !== name) location.hash = name;
+
     document.querySelectorAll('.nav-item').forEach(el => {
       el.classList.toggle('active', el.dataset.module === name);
     });
-    const titles = {
-      dashboard: '🏠 Inicio',
-      inventario: '📦 Inventario',
-      recetas: '📋 Recetas',
-      costos: '💰 Costos',
-      ventas: '🛒 Ventas',
-      caja: '💵 Caja',
-      estadisticas: '📈 Estadísticas',
-      metas: '🎯 Metas',
-      reportes: '📄 Reportes'
-    };
-    document.getElementById('pageTitle').textContent = titles[name] || name;
+    document.getElementById('pageTitle').textContent = this.titles[name] || name;
+
+    const cont = document.getElementById('moduleContainer');
     const fn = this.modules[name];
     if (fn) {
-      document.getElementById('moduleContainer').innerHTML = '<div class="fade-in">';
       fn();
+      // El módulo acaba de escribir su HTML: recién ahora se puede animar.
+      // Antes se escribía '<div class="fade-in">' ANTES de llamar a fn(), que lo pisaba.
+      cont.classList.remove('fade-in');
+      void cont.offsetWidth;          // reinicia la animación
+      cont.classList.add('fade-in');
     } else {
-      document.getElementById('moduleContainer').innerHTML =
+      cont.innerHTML =
         `<div class="empty-state"><div class="empty-icon">🚧</div><p>Módulo en construcción</p></div>`;
     }
+
     // Cerrar sidebar en mobile
     document.getElementById('sidebar').classList.remove('open');
     document.getElementById('overlay').classList.remove('show');
+    window.scrollTo({ top: 0, behavior: 'instant' });
+    actualizarBadges();
+  },
+
+  /** Re-dibuja el módulo actual sin tocar la navegación. */
+  refresh() {
+    const fn = this.modules[this.current];
+    if (fn) fn();
   }
 };
+
+/** Contador de pedidos abiertos en el menú lateral. */
+function actualizarBadges() {
+  const el = document.getElementById('badgePedidos');
+  if (!el) return;
+  const abiertos = DB.get('pedidos', [])
+    .filter(p => p.estado !== 'entregado' && p.estado !== 'cancelado').length;
+  el.textContent = abiertos;
+  el.hidden = abiertos === 0;
+}
+window.actualizarBadges = actualizarBadges;
 
 // ─────────────────────────────────────────
 // TEMA
@@ -434,17 +642,24 @@ function initCaja() {
     </div>
   `;
 
+  const etiquetaOrigen = {
+    venta:   '<span class="badge badge-teal" title="Generado por una venta">🛒 venta</span>',
+    compra:  '<span class="badge badge-orange" title="Generado por una compra">🛍 compra</span>',
+    pedido:  '<span class="badge badge-purple" title="Generado por un pedido">🎁 pedido</span>',
+    abono:   '<span class="badge badge-purple" title="Seña o abono de un pedido">💳 abono</span>'
+  };
+
   const renderItems = (list) => {
     if (!list.length) return `<div class="empty-state"><div class="empty-icon">💰</div><p>Sin movimientos</p></div>`;
     return list.slice().reverse().map(c => `
       <div class="caja-item">
         <div>
-          <div class="caja-concepto">${Utils.escHtml(c.concepto)}</div>
+          <div class="caja-concepto">${Utils.escHtml(c.concepto)} ${etiquetaOrigen[c.origen] || ''}</div>
           <div class="caja-fecha">${Utils.formatDate(c.fecha)} · ${Utils.escHtml(c.metodo || '')}</div>
         </div>
         <div style="display:flex;align-items:center;gap:0.75rem">
           <span class="caja-monto ${c.tipo}">${c.tipo === 'ingreso' ? '+' : '-'}${Utils.formatMoney(c.monto)}</span>
-          <button class="btn btn-sm btn-danger btn-icon" onclick="eliminarCaja('${c.id}')">🗑</button>
+          <button class="btn btn-sm btn-danger btn-icon" onclick="eliminarCaja('${c.id}')" title="Eliminar">🗑</button>
         </div>
       </div>`).join('');
   };
@@ -503,15 +718,29 @@ function guardarCaja(tipo) {
   const fecha    = document.getElementById('cajaFecha').value;
   const metodo   = document.getElementById('cajaMetodo').value;
   if (!concepto || monto <= 0) { toast('Completa todos los campos', 'warning'); return; }
-  const caja = DB.get('caja', []);
-  caja.push({ id: Utils.uid(), tipo, concepto, monto, fecha, metodo });
-  DB.set('caja', caja);
+  if (!fecha) { toast('Elegí una fecha', 'warning'); return; }
+  CajaDB.add({ tipo, concepto, monto, fecha, metodo, origen: 'manual' });
   Modal.hide();
   toast(`${tipo === 'ingreso' ? 'Ingreso' : 'Gasto'} registrado ✅`, 'success');
   initCaja();
 }
 
 function eliminarCaja(id) {
+  const mov = DB.get('caja', []).find(c => c.id === id);
+  if (!mov) return;
+
+  // Los movimientos automáticos se borran desde su origen, si no quedan descuadrados
+  const origenes = {
+    venta:  'Este ingreso lo generó una venta. Borralo desde Ventas para que se borren los dos juntos.',
+    compra: 'Este egreso lo generó una compra. Borralo desde Inventario para que además se revierta el stock.',
+    pedido: 'Este movimiento lo generó un pedido. Manejalo desde Pedidos.',
+    abono:  'Este movimiento es el abono de un pedido. Manejalo desde Pedidos.'
+  };
+  if (origenes[mov.origen]) {
+    toast(origenes[mov.origen], 'warning', 6000);
+    return;
+  }
+
   Modal.confirm('¿Eliminar este movimiento?', () => {
     DB.set('caja', DB.get('caja', []).filter(c => c.id !== id));
     toast('Movimiento eliminado', 'info');
@@ -566,6 +795,15 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('modalBackdrop').addEventListener('click', e => {
     if (e.target === document.getElementById('modalBackdrop')) Modal.hide();
   });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (Modal.isOpen()) Modal.hide();
+      else if (sidebar.classList.contains('open')) {
+        sidebar.classList.remove('open');
+        overlay.classList.remove('show');
+      }
+    }
+  });
 
   // Tema
   document.getElementById('themeToggle').addEventListener('click', toggleTheme);
@@ -575,12 +813,18 @@ document.addEventListener('DOMContentLoaded', () => {
   Router.register('metas', initMetas);
   Router.register('caja', initCaja);
 
-  // Arrancar en dashboard
-  Router.go('dashboard');
+  // Volver / avanzar con el historial del navegador
+  window.addEventListener('hashchange', () => {
+    const name = location.hash.slice(1) || 'dashboard';
+    if (name !== Router.current) Router.go(name);
+  });
 
-  // Service Worker
+  // Arrancar en el módulo de la URL (o en el dashboard)
+  Router.go(location.hash.slice(1) || 'dashboard');
+
+  // Service Worker — ruta relativa para que también funcione en subcarpetas
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js')
+    navigator.serviceWorker.register('service-worker.js', { scope: './' })
       .then(() => console.log('SW registrado'))
       .catch(err => console.warn('SW error:', err));
   }
@@ -604,8 +848,10 @@ document.addEventListener('DOMContentLoaded', () => {
 });
 
 // Exportar para otros módulos
-window.DB     = DB;
-window.Utils  = Utils;
-window.toast  = toast;
-window.Modal  = Modal;
-window.Router = Router;
+window.DB      = DB;
+window.Utils   = Utils;
+window.toast   = toast;
+window.Modal   = Modal;
+window.Router  = Router;
+window.CajaDB  = CajaDB;
+window.Stock   = Stock;

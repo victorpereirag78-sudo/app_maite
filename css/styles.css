@@ -151,6 +151,32 @@ label { font-size: 0.85rem; font-weight: 600; color: var(--text-muted); margin-b
 }
 .nav-icon { font-size: 1.1rem; width: 20px; text-align: center; }
 
+/* Encabezado de grupo dentro del menú */
+.nav-group {
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  opacity: 0.65;
+  padding: 0.9rem 0.9rem 0.3rem;
+}
+.nav-badge {
+  margin-left: auto;
+  background: var(--pink);
+  color: #1c1208;
+  font-size: 0.7rem;
+  font-weight: 800;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 99px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.nav-badge[hidden] { display: none; }
+
 .sidebar-footer {
   padding: 1rem;
   border-top: 1px solid var(--border);
@@ -670,6 +696,75 @@ tbody tr:last-child td { border-bottom: none; }
 .tab-btn.active { background: var(--pink); color: white; }
 .tab-pane { display: none; }
 .tab-pane.active { display: block; }
+
+/* ─────────────────────────────────────────
+   FICHAS: recetas, clientes, pedidos
+───────────────────────────────────────── */
+.receta-stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: 0.6rem;
+  margin: 0.9rem 0 0.75rem;
+}
+.receta-stat {
+  background: var(--surface2);
+  border-radius: var(--radius-sm);
+  padding: 0.6rem 0.75rem;
+  text-align: center;
+}
+
+.avatar {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, var(--pink), var(--orange));
+  color: #1c1208;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--font-display);
+  font-weight: 900;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+/* AGENDA DE PEDIDOS */
+.agenda-grupo { margin-bottom: 1.6rem; }
+.agenda-titulo {
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 0.95rem;
+  margin-bottom: 0.8rem;
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+.agenda-grupo.atrasado .agenda-titulo { color: #ff4466; }
+.agenda-grupo.hoy .agenda-titulo { color: var(--orange); }
+
+/* Franja de color según el estado del pedido */
+.pedido-card { border-left: 4px solid var(--border); }
+.pedido-card.pendiente  { border-left-color: var(--orange); }
+.pedido-card.produccion { border-left-color: var(--purple); }
+.pedido-card.listo      { border-left-color: var(--pink); }
+.pedido-card.entregado  { border-left-color: var(--teal); opacity: 0.75; }
+.pedido-card.cancelado  { border-left-color: #ff4466; opacity: 0.55; }
+
+tfoot td {
+  border-top: 2px solid var(--border);
+  border-bottom: none;
+  background: var(--surface2);
+}
+
+textarea {
+  min-height: 90px;
+  line-height: 1.5;
+  font-size: 0.9rem;
+}
+
+/* Botón deshabilitado (ej. producir sin stock) */
+.btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.btn:disabled:hover { box-shadow: none; }
 
 /* SPINNER */
 .spinner {

@@ -55,13 +55,14 @@ function initInventario() {
       <div class="card" style="margin-top:1.2rem">
         <div class="card-title">🛍 Últimas compras</div>
         <div class="table-wrap"><table>
-          <thead><tr><th>Fecha</th><th>Ingrediente</th><th>Cantidad</th><th>Costo</th></tr></thead>
+          <thead><tr><th>Fecha</th><th>Ingrediente</th><th>Cantidad</th><th>Costo</th><th></th></tr></thead>
           <tbody>
             ${compras.map(c => `<tr>
               <td>${Utils.formatDate(c.fecha)}</td>
               <td>${Utils.escHtml(c.ingNombre || c.ingId)}</td>
               <td>${c.cantidad} ${Utils.escHtml(c.unidad || '')}</td>
               <td>${Utils.formatMoney(c.costo)}</td>
+              <td><button class="btn btn-sm btn-danger btn-icon" onclick="eliminarCompra('${c.id}')" title="Anular compra">🗑</button></td>
             </tr>`).join('')}
           </tbody>
         </table></div>
@@ -190,7 +191,7 @@ function abrirFormCompra() {
     <div class="form-group">
       <label>Ingrediente</label>
       <select id="cIngId">
-        ${ingredientes.map(i => `<option value="${i.id}">${Utils.escHtml(i.nombre)} (stock: ${i.stock} ${i.unidad})</option>`).join('')}
+        ${ingredientes.map(i => `<option value="${i.id}">${Utils.escHtml(i.nombre)} (stock: ${i.stock} ${Utils.escHtml(i.unidad)})</option>`).join('')}
       </select>
     </div>
     <div class="form-row">
@@ -217,33 +218,87 @@ function guardarCompra() {
   const costo    = parseFloat(document.getElementById('cCosto').value) || 0;
   const fecha    = document.getElementById('cFecha').value;
   if (!cantidad) { toast('Ingresá la cantidad', 'warning'); return; }
+  if (!fecha)    { toast('Elegí una fecha', 'warning'); return; }
 
-  // Sumar al stock
   const ingredientes = DB.get('ingredientes', []);
   const idx = ingredientes.findIndex(i => i.id === ingId);
-  if (idx >= 0) {
-    const ing = ingredientes[idx];
-    ingredientes[idx].stock = (ing.stock || 0) + cantidad;
-    if (costo > 0) ingredientes[idx].precioUnidad = costo / cantidad * ing.unidadBase;
-    DB.set('ingredientes', ingredientes);
-  }
+  if (idx < 0) { toast('Ingrediente no encontrado', 'error'); return; }
 
-  const ing = ingredientes.find(i => i.id === ingId);
+  const ing         = ingredientes[idx];
+  const stockPrevio = ing.stock || 0;
+  const precioPrevio= ing.precioUnidad || 0;
+  const base        = ing.unidadBase || 1;
+
+  ingredientes[idx].stock = stockPrevio + cantidad;
+
+  /**
+   * Precio promedio ponderado. Antes se pisaba el precio con el de la última
+   * compra, así que una compra chica y cara distorsionaba el costo de todo
+   * el stock viejo (y con él, el costo de todas las recetas).
+   */
+  if (costo > 0) {
+    const precioNuevo = costo / cantidad * base;
+    ingredientes[idx].precioUnidad = (stockPrevio > 0 && precioPrevio > 0)
+      ? ((stockPrevio * precioPrevio) + (cantidad * precioNuevo)) / (stockPrevio + cantidad)
+      : precioNuevo;
+  }
+  DB.set('ingredientes', ingredientes);
+
+  const compraId = Utils.uid();
   const compras = DB.get('compras', []);
-  compras.push({ id: Utils.uid(), ingId, ingNombre: ing?.nombre, cantidad, unidad: ing?.unidad, costo, fecha });
+  compras.push({
+    id: compraId, ingId, ingNombre: ing.nombre, cantidad,
+    unidad: ing.unidad, costo, fecha,
+    precioPrevio, stockPrevio          // para poder revertir si se anula
+  });
   DB.set('compras', compras);
 
-  // Registrar en caja como egreso
-  const caja = DB.get('caja', []);
+  // Egreso en caja, enlazado a la compra para poder anular las dos juntas
   if (costo > 0) {
-    caja.push({ id: Utils.uid(), tipo:'egreso', concepto:`Compra: ${ing?.nombre}`, monto: costo, fecha, metodo:'Efectivo' });
-    DB.set('caja', caja);
+    CajaDB.add({
+      tipo: 'egreso',
+      concepto: `Compra: ${ing.nombre}`,
+      monto: costo,
+      fecha,
+      metodo: 'Efectivo',
+      origen: 'compra',
+      refId: compraId
+    });
   }
 
   Modal.hide();
   toast('Compra registrada y stock actualizado ✅', 'success');
   initInventario();
 }
+
+function eliminarCompra(id) {
+  const compras = DB.get('compras', []);
+  const compra  = compras.find(c => c.id === id);
+  if (!compra) return;
+
+  Modal.confirm(
+    `¿Anular la compra de ${compra.cantidad} ${compra.unidad || ''} de ${compra.ingNombre}? ` +
+    `Se descuenta del stock y se borra el egreso de la caja.`,
+    () => {
+      const ingredientes = DB.get('ingredientes', []);
+      const idx = ingredientes.findIndex(i => i.id === compra.ingId);
+      if (idx >= 0) {
+        // Nunca dejar stock negativo por una anulación
+        ingredientes[idx].stock = Math.max(0, (ingredientes[idx].stock || 0) - compra.cantidad);
+        if (compra.precioPrevio != null && compra.precioPrevio > 0) {
+          ingredientes[idx].precioUnidad = compra.precioPrevio;
+        }
+        DB.set('ingredientes', ingredientes);
+      }
+      DB.set('compras', compras.filter(c => c.id !== id));
+      CajaDB.removeByRef(id);
+      toast('Compra anulada y stock revertido', 'info');
+      initInventario();
+    },
+    'Sí, anular'
+  );
+}
+window.eliminarCompra = eliminarCompra;
 
 window.abrirFormIngrediente = abrirFormIngrediente;
 window.guardarIngrediente   = guardarIngrediente;

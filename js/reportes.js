@@ -40,6 +40,8 @@ function initReportes() {
       </div>
     </div>
 
+    ${renderAvisoRespaldo()}
+
     <div class="card" style="margin-bottom:1.2rem">
       <div class="card-title">💾 Respaldo de datos</div>
       <p style="color:var(--text-muted);font-size:0.9rem;margin-bottom:1rem">
@@ -80,29 +82,61 @@ function initReportes() {
   document.getElementById('moduleContainer').innerHTML = html;
 }
 
+/**
+ * Todo vive en el navegador: si se limpian los datos del sitio o se cambia de
+ * teléfono, se pierde todo. Por eso el aviso es visible y no un texto chiquito.
+ */
+function renderAvisoRespaldo() {
+  const ultimo = DB.get('ultimoRespaldo', null);
+  if (!ultimo) {
+    return `<div class="alert alert-warning">
+      ⚠️ <strong>Nunca hiciste un respaldo.</strong> Tus datos viven solo en este dispositivo.
+    </div>`;
+  }
+  const dias = Utils.diasEntre(ultimo, Utils.today());
+  if (dias >= 7) {
+    return `<div class="alert alert-warning">
+      ⚠️ Tu último respaldo fue hace <strong>${dias} días</strong> (${Utils.formatDate(ultimo)}). Conviene exportar uno nuevo.
+    </div>`;
+  }
+  return `<div class="alert alert-success">
+    ✅ Último respaldo: <strong>${Utils.formatDate(ultimo)}</strong>${dias === 0 ? ' (hoy)' : ` (hace ${dias} día${dias === 1 ? '' : 's'})`}
+  </div>`;
+}
+
 // ── Exportar JSON completo
 function exportarJSON() {
   const datos = {
-    version: '1.0',
+    version: '2.0',
     fecha: new Date().toISOString(),
     negocio: DB.get('config', DB.defaults.config).negocio,
-    ingredientes: DB.get('ingredientes', []),
-    compras:      DB.get('compras', []),
-    recetas:      DB.get('recetas', []),
-    ventas:       DB.get('ventas', []),
-    caja:         DB.get('caja', []),
-    metas:        DB.get('metas', []),
-    config:       DB.get('config', DB.defaults.config)
+    config: DB.get('config', DB.defaults.config)
   };
+  // Todas las colecciones, así no hay que tocar el respaldo cada vez que se agrega un módulo
+  DB.colecciones.forEach(k => { datos[k] = DB.get(k, []); });
 
-  const blob = new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = `alfajores-backup-${Utils.today()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  descargarArchivo(
+    new Blob([JSON.stringify(datos, null, 2)], { type: 'application/json' }),
+    `alfajores-backup-${Utils.today()}.json`
+  );
+  DB.set('ultimoRespaldo', Utils.today());
   toast('Respaldo exportado ✅', 'success');
+  initReportes();
+}
+
+/**
+ * Firefox cancela la descarga si se revoca la URL en el mismo tick,
+ * y algunos navegadores exigen que el <a> esté en el DOM.
+ */
+function descargarArchivo(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const a   = document.createElement('a');
+  a.href    = url;
+  a.download = filename;
+  a.style.display = 'none';
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 1500);
 }
 
 function importarJSON() {
@@ -116,24 +150,34 @@ function leerArchivoJSON(input) {
   reader.onload = e => {
     try {
       const datos = JSON.parse(e.target.result);
-      if (!datos.version) throw new Error('Archivo inválido');
+      if (!datos || typeof datos !== 'object' || !datos.version) {
+        throw new Error('No parece un respaldo de esta app');
+      }
+      // Validar la forma antes de pisar nada: si el archivo viene roto,
+      // antes se sobreescribía igual y no había vuelta atrás.
+      const invalidas = DB.colecciones.filter(k => datos[k] !== undefined && !Array.isArray(datos[k]));
+      if (invalidas.length) throw new Error('Estructura inválida en: ' + invalidas.join(', '));
 
+      const resumen = DB.colecciones
+        .filter(k => Array.isArray(datos[k]) && datos[k].length)
+        .map(k => `${datos[k].length} ${k}`)
+        .join(', ') || 'sin registros';
+
+      // Nota: el mensaje NO se pre-escapa porque Modal.confirm ya escapa.
       Modal.confirm(
-        `¿Restaurar respaldo de "${Utils.escHtml(datos.negocio || '')}" del ${Utils.formatDate(datos.fecha)}? Esto sobreescribirá tus datos actuales.`,
+        `¿Restaurar el respaldo de "${datos.negocio || 'sin nombre'}" del ${Utils.formatDate(datos.fecha)}? ` +
+        `Contiene: ${resumen}. Esto reemplaza TODOS tus datos actuales.`,
         () => {
-          if (datos.ingredientes) DB.set('ingredientes', datos.ingredientes);
-          if (datos.compras)      DB.set('compras', datos.compras);
-          if (datos.recetas)      DB.set('recetas', datos.recetas);
-          if (datos.ventas)       DB.set('ventas', datos.ventas);
-          if (datos.caja)         DB.set('caja', datos.caja);
-          if (datos.metas)        DB.set('metas', datos.metas);
-          if (datos.config)       DB.set('config', datos.config);
+          DB.colecciones.forEach(k => { if (Array.isArray(datos[k])) DB.set(k, datos[k]); });
+          if (datos.config && typeof datos.config === 'object') DB.set('config', datos.config);
+          DB.init();   // completa las colecciones que el respaldo viejo no tenía
           toast('Datos restaurados correctamente ✅', 'success');
           initReportes();
-        }
+        },
+        'Sí, restaurar'
       );
-    } catch {
-      toast('Archivo JSON inválido ❌', 'error');
+    } catch (err) {
+      toast('Archivo inválido ❌ ' + (err.message || ''), 'error', 6000);
     }
   };
   reader.readAsText(file);
@@ -145,14 +189,17 @@ function exportarCSVVentas() {
   const ventas = DB.get('ventas', []);
   if (!ventas.length) { toast('Sin ventas para exportar', 'warning'); return; }
 
-  const headers = ['Fecha','Receta','Cantidad','Precio unitario','Total','Cliente','Método de pago','Observaciones'];
+  const clientes = DB.get('clientes', []);
+  const headers = ['Fecha','Producto','Cantidad','Precio unitario','Total','Costo unitario','Ganancia','Cliente','Método de pago','Observaciones'];
   const rows = ventas.map(v => [
     v.fecha,
     v.receta || '',
     v.cantidad,
     v.precioUnit,
     v.total,
-    v.cliente || '',
+    v.costoUnit ?? '',
+    v.costoUnit != null ? (v.precioUnit - v.costoUnit) * v.cantidad : '',
+    v.clienteId ? (clientes.find(c => c.id === v.clienteId)?.nombre || v.cliente || '') : (v.cliente || ''),
     v.metodo || 'Efectivo',
     v.obs || ''
   ]);
@@ -180,26 +227,22 @@ function exportarCSVCaja() {
 }
 
 function descargarCSV(data, filename) {
-  const csv  = data.map(row => row.map(v => `"${String(v).replace(/"/g,'""')}"`).join(',')).join('\n');
-  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' });
-  const url  = URL.createObjectURL(blob);
-  const a    = document.createElement('a');
-  a.href     = url;
-  a.download = filename;
-  a.click();
-  URL.revokeObjectURL(url);
+  // csvSafe evita que Excel ejecute como f\u00F3rmula un texto que empieza con = + - @
+  const csv  = data.map(row => row.map(v => `"${Utils.csvSafe(v).replace(/"/g,'""')}"`).join(',')).join('\r\n');
+  descargarArchivo(new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=utf-8;' }), filename);
 }
 
 // ── Borrar todo
 function borrarTodo() {
   Modal.confirm(
-    '⚠️ ¿Borrar TODOS los datos? Esto eliminará ingredientes, recetas, ventas y caja. No hay vuelta atrás.',
+    '⚠️ ¿Borrar TODOS los datos? Esto elimina ingredientes, recetas, producciones, pedidos, clientes, ventas y caja. No hay vuelta atrás.',
     () => {
-      ['ingredientes','compras','recetas','ventas','caja','metas'].forEach(k => DB.set(k, []));
+      DB.colecciones.forEach(k => DB.set(k, []));
       DB.set('config', DB.defaults.config);
       toast('Datos eliminados', 'warning');
       initReportes();
-    }
+    },
+    'Sí, borrar todo'
   );
 }
 

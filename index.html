@@ -2,13 +2,25 @@
 <html lang="es" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
   <meta name="description" content="Gestión completa de tu negocio de alfajores artesanales" />
-  <meta name="theme-color" content="#e8427d" />
+  <meta name="theme-color" content="#ffcc00" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Alfajores" />
   <link rel="manifest" href="manifest.json" />
+  <link rel="icon" href="icons/icon-192.png" />
   <link rel="apple-touch-icon" href="icons/icon-192.png" />
   <title>Alfajores Maite ❤️🍫</title>
+  <!-- Aplica el tema guardado antes de pintar: si no, arranca oscuro y parpadea. -->
+  <script>
+    try {
+      document.documentElement.setAttribute('data-theme', localStorage.getItem('alfmgr_theme') || 'dark');
+    } catch (e) {}
+  </script>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;600;700;800;900&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/styles.css" />
 </head>
@@ -28,31 +40,47 @@
   </div>
 
   <nav class="sidebar-nav">
-    <a class="nav-item active" data-module="dashboard" href="#">
+    <a class="nav-item active" data-module="dashboard" href="#dashboard">
       <span class="nav-icon">🏠</span><span class="nav-label">Inicio</span>
     </a>
-    <a class="nav-item" data-module="inventario" href="#">
+
+    <span class="nav-group">Producción</span>
+    <a class="nav-item" data-module="inventario" href="#inventario">
       <span class="nav-icon">📦</span><span class="nav-label">Inventario</span>
     </a>
-    <a class="nav-item" data-module="recetas" href="#">
+    <a class="nav-item" data-module="recetas" href="#recetas">
       <span class="nav-icon">📋</span><span class="nav-label">Recetas</span>
     </a>
-    <a class="nav-item" data-module="costos" href="#">
+    <a class="nav-item" data-module="produccion" href="#produccion">
+      <span class="nav-icon">👩‍🍳</span><span class="nav-label">Producción</span>
+    </a>
+    <a class="nav-item" data-module="costos" href="#costos">
       <span class="nav-icon">💰</span><span class="nav-label">Costos</span>
     </a>
-    <a class="nav-item" data-module="ventas" href="#">
+
+    <span class="nav-group">Ventas</span>
+    <a class="nav-item" data-module="pedidos" href="#pedidos">
+      <span class="nav-icon">🎁</span><span class="nav-label">Pedidos</span>
+      <span class="nav-badge" id="badgePedidos" hidden></span>
+    </a>
+    <a class="nav-item" data-module="ventas" href="#ventas">
       <span class="nav-icon">🛒</span><span class="nav-label">Ventas</span>
     </a>
-    <a class="nav-item" data-module="caja" href="#">
+    <a class="nav-item" data-module="clientes" href="#clientes">
+      <span class="nav-icon">👥</span><span class="nav-label">Clientes</span>
+    </a>
+    <a class="nav-item" data-module="caja" href="#caja">
       <span class="nav-icon">💵</span><span class="nav-label">Caja</span>
     </a>
-    <a class="nav-item" data-module="estadisticas" href="#">
+
+    <span class="nav-group">Análisis</span>
+    <a class="nav-item" data-module="estadisticas" href="#estadisticas">
       <span class="nav-icon">📈</span><span class="nav-label">Estadísticas</span>
     </a>
-    <a class="nav-item" data-module="metas" href="#">
+    <a class="nav-item" data-module="metas" href="#metas">
       <span class="nav-icon">🎯</span><span class="nav-label">Metas</span>
     </a>
-    <a class="nav-item" data-module="reportes" href="#">
+    <a class="nav-item" data-module="reportes" href="#reportes">
       <span class="nav-icon">📄</span><span class="nav-label">Reportes</span>
     </a>
   </nav>
@@ -103,6 +131,9 @@
 <script src="js/dashboard.js"></script>
 <script src="js/inventario.js"></script>
 <script src="js/recetas.js"></script>
+<script src="js/produccion.js"></script>
+<script src="js/clientes.js"></script>
+<script src="js/pedidos.js"></script>
 <script src="js/ventas.js"></script>
 <script src="js/estadisticas.js"></script>
 <script src="js/reportes.js"></script>
