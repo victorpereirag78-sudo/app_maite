@@ -44,6 +44,7 @@ const DB = {
     ajustesStock: [],
     clientes: [],
     pedidos: [],
+    gastosFijos: [],
     config: {
       moneda: '$',
       negocio: 'Alfajores Maite ❤️',
@@ -52,7 +53,7 @@ const DB = {
   },
 
   // Colecciones que se respaldan / restauran / borran en bloque
-  colecciones: ['ingredientes','compras','recetas','ventas','caja','metas','producciones','ajustesStock','clientes','pedidos'],
+  colecciones: ['ingredientes','compras','recetas','ventas','caja','metas','producciones','ajustesStock','clientes','pedidos','gastosFijos'],
 
   init() {
     Object.entries(this.defaults).forEach(([k, v]) => {
@@ -60,6 +61,95 @@ const DB = {
     });
   }
 };
+
+// ─────────────────────────────────────────
+// RESPALDO AUTOMÁTICO
+// ─────────────────────────────────────────
+/**
+ * Todo vive en el navegador. Si se limpian los datos del sitio o el teléfono
+ * se rompe, no hay de dónde recuperar. Esto guarda una copia interna cada
+ * pocos días, aparte de los datos en uso, para poder volver atrás.
+ *
+ * No reemplaza al respaldo exportado (si se borra el sitio, se va también),
+ * pero cubre el caso más común: haber borrado o pisado algo sin querer.
+ */
+const Respaldo = {
+  DIAS_COPIA: 2,        // cada cuánto se guarda la copia interna
+  DIAS_AVISO: 7,        // cada cuánto se recuerda exportar el archivo
+  MAX_COPIAS: 2,
+
+  snapshot() {
+    const datos = { version: '2.0', fecha: new Date().toISOString(), auto: true };
+    DB.colecciones.forEach(k => { datos[k] = DB.get(k, []); });
+    datos.config = DB.get('config', DB.defaults.config);
+    return datos;
+  },
+
+  registros() {
+    return DB.get('copiasAuto', []) || [];
+  },
+
+  /** Cantidad total de registros, para no guardar copias de una app vacía. */
+  _tamano(snap) {
+    return DB.colecciones.reduce((s, k) => s + (snap[k]?.length || 0), 0);
+  },
+
+  crear(forzado = false) {
+    const snap = this.snapshot();
+    if (this._tamano(snap) === 0) return false;   // nada que respaldar
+
+    const copias = this.registros();
+    const ultima = copias[copias.length - 1];
+    if (!forzado && ultima && Utils.diasEntre(ultima.dia, Utils.today()) < this.DIAS_COPIA) {
+      return false;
+    }
+
+    copias.push({ id: Utils.uid(), dia: Utils.today(), ts: snap.fecha, registros: this._tamano(snap), datos: snap });
+    // Solo las últimas: dos copias completas ya ocupan bastante espacio
+    while (copias.length > this.MAX_COPIAS) copias.shift();
+
+    if (!DB.set('copiasAuto', copias)) {
+      // Si no entra, mejor quedarse con una sola que perder los datos vivos
+      DB.set('copiasAuto', copias.slice(-1));
+    }
+    return true;
+  },
+
+  restaurar(id) {
+    const copia = this.registros().find(c => c.id === id);
+    if (!copia) return false;
+    DB.colecciones.forEach(k => { if (Array.isArray(copia.datos[k])) DB.set(k, copia.datos[k]); });
+    if (copia.datos.config) DB.set('config', copia.datos.config);
+    DB.init();
+    return true;
+  },
+
+  /** Días desde el último respaldo exportado a archivo. */
+  diasSinExportar() {
+    const ultimo = DB.get('ultimoRespaldo', null);
+    if (!ultimo) return Infinity;
+    return Utils.diasEntre(ultimo, Utils.today());
+  },
+
+  /** Corre al abrir la app: guarda copia y avisa si hace mucho no exporta. */
+  alIniciar() {
+    try { this.crear(); } catch (e) { console.warn('Respaldo automático:', e); }
+
+    const dias = this.diasSinExportar();
+    const totalRegistros = this._tamano(this.snapshot());
+    if (totalRegistros > 0 && dias >= this.DIAS_AVISO) {
+      setTimeout(() => {
+        toast(
+          dias === Infinity
+            ? 'Nunca exportaste un respaldo. Andá a Reportes y descargá una copia.'
+            : `Hace ${dias} días que no exportás un respaldo. Conviene bajar una copia.`,
+          'warning', 9000
+        );
+      }, 2500);
+    }
+  }
+};
+window.Respaldo = Respaldo;
 
 // ─────────────────────────────────────────
 // UTILS
@@ -310,6 +400,7 @@ const Router = {
   titles: {
     dashboard: '🏠 Inicio',
     inventario: '📦 Inventario',
+    compras: '🛒 Qué comprar',
     recetas: '📋 Recetas',
     produccion: '👩‍🍳 Producción',
     costos: '💰 Costos',
@@ -363,14 +454,22 @@ const Router = {
   }
 };
 
-/** Contador de pedidos abiertos en el menú lateral. */
+/** Contadores del menú lateral: pedidos abiertos e ingredientes a comprar. */
 function actualizarBadges() {
-  const el = document.getElementById('badgePedidos');
-  if (!el) return;
-  const abiertos = DB.get('pedidos', [])
-    .filter(p => p.estado !== 'entregado' && p.estado !== 'cancelado').length;
-  el.textContent = abiertos;
-  el.hidden = abiertos === 0;
+  const ped = document.getElementById('badgePedidos');
+  if (ped) {
+    const abiertos = DB.get('pedidos', [])
+      .filter(p => p.estado !== 'entregado' && p.estado !== 'cancelado').length;
+    ped.textContent = abiertos;
+    ped.hidden = abiertos === 0;
+  }
+
+  const com = document.getElementById('badgeCompras');
+  if (com && typeof calcularListaCompras === 'function') {
+    const n = calcularListaCompras(0).items.length;
+    com.textContent = n;
+    com.hidden = n === 0;
+  }
 }
 window.actualizarBadges = actualizarBadges;
 
@@ -393,100 +492,20 @@ function toggleTheme() {
 }
 
 // ─────────────────────────────────────────
-// MÓDULO COSTOS (simple, sin JS separado)
+// COSTOS — base compartida por varios módulos
 // ─────────────────────────────────────────
-function initCostos() {
-  const recetas = DB.get('recetas', []);
-  const ingredientes = DB.get('ingredientes', []);
-
-  let html = `
-    <div class="section-header">
-      <h2 class="section-title">💰 Costos & Precios</h2>
-    </div>
-  `;
-
-  if (recetas.length === 0) {
-    html += `<div class="alert alert-info">ℹ️ Primero crea recetas para calcular costos.</div>`;
-  } else {
-    html += `<div class="card" style="margin-bottom:1.2rem">
-      <div class="card-title">📋 Costo por receta</div>
-      <div class="table-wrap"><table>
-        <thead><tr>
-          <th>Receta</th><th>Unidades</th><th>Costo total</th><th>Costo unit.</th><th>Precio sugerido (+40%)</th>
-        </tr></thead><tbody>`;
-    recetas.forEach(r => {
-      const costo = calcularCostoReceta(r, ingredientes);
-      const unit  = r.unidades > 0 ? costo / r.unidades : 0;
-      const sug   = unit * 1.4;
-      html += `<tr>
-        <td><strong>${Utils.escHtml(r.nombre)}</strong></td>
-        <td>${r.unidades}</td>
-        <td>${Utils.formatMoney(costo)}</td>
-        <td style="color:var(--orange);font-weight:700">${Utils.formatMoney(unit)}</td>
-        <td style="color:var(--teal);font-weight:700">${Utils.formatMoney(sug)}</td>
-      </tr>`;
-    });
-    html += `</tbody></table></div></div>`;
-  }
-
-  // Simulador
-  html += `
-    <div class="card">
-      <div class="card-title">🧮 Simulador de precio de venta</div>
-      <div class="form-row">
-        <div class="form-group">
-          <label>Costo unitario</label>
-          <input type="number" id="simCosto" placeholder="0" min="0" step="0.01" />
-        </div>
-        <div class="form-group">
-          <label>Margen de ganancia (%)</label>
-          <input type="number" id="simMargen" value="40" min="0" max="500" />
-        </div>
-      </div>
-      <div class="form-group">
-        <label>Cantidad a vender</label>
-        <input type="number" id="simCantidad" value="100" min="1" />
-      </div>
-      <button class="btn btn-primary" onclick="simularPrecio()">Calcular</button>
-      <div id="simResult" style="margin-top:1rem"></div>
-    </div>
-  `;
-
-  document.getElementById('moduleContainer').innerHTML = html;
-}
-
+/** Costo de ingredientes de una tanda. Es el costo DIRECTO, sin gastos fijos. */
 function calcularCostoReceta(receta, ingredientes) {
   let total = 0;
   (receta.ingredientes || []).forEach(ri => {
     const ing = ingredientes.find(i => i.id === ri.id);
     if (ing && ing.precioUnidad > 0) {
-      total += (ri.cantidad / ing.unidadBase) * ing.precioUnidad;
+      total += (ri.cantidad / (ing.unidadBase || 1)) * ing.precioUnidad;
     }
   });
   return total;
 }
 window.calcularCostoReceta = calcularCostoReceta;
-
-function simularPrecio() {
-  const costo    = parseFloat(document.getElementById('simCosto').value) || 0;
-  const margen   = parseFloat(document.getElementById('simMargen').value) || 40;
-  const cantidad = parseInt(document.getElementById('simCantidad').value) || 100;
-  const precio   = costo * (1 + margen / 100);
-  const ganTotal = (precio - costo) * cantidad;
-  const ingresos = precio * cantidad;
-
-  document.getElementById('simResult').innerHTML = `
-    <div class="sim-result">
-      <h3>Resultado del simulador</h3>
-      <div class="sim-row"><span>Costo unitario</span><span>${Utils.formatMoney(costo)}</span></div>
-      <div class="sim-row"><span>Margen ${margen}%</span><span>+${Utils.formatMoney(precio - costo)}</span></div>
-      <div class="sim-row"><span>Precio de venta</span><span style="color:var(--pink)">${Utils.formatMoney(precio)}</span></div>
-      <div class="sim-row"><span>Ingresos totales (${cantidad} un.)</span><span>${Utils.formatMoney(ingresos)}</span></div>
-      <div class="sim-row"><span>Ganancia neta</span><span style="color:var(--teal)">${Utils.formatMoney(ganTotal)}</span></div>
-    </div>
-  `;
-}
-window.simularPrecio = simularPrecio;
 
 // ─────────────────────────────────────────
 // MÓDULO METAS
@@ -809,7 +828,6 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('themeToggle').addEventListener('click', toggleTheme);
 
   // Registrar módulos
-  Router.register('costos', initCostos);
   Router.register('metas', initMetas);
   Router.register('caja', initCaja);
 
@@ -821,6 +839,9 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Arrancar en el módulo de la URL (o en el dashboard)
   Router.go(location.hash.slice(1) || 'dashboard');
+
+  // Copia interna automática + aviso si hace mucho no exporta
+  Respaldo.alIniciar();
 
   // Service Worker — ruta relativa para que también funcione en subcarpetas
   if ('serviceWorker' in navigator) {

@@ -72,7 +72,8 @@ function initVentas() {
             <td style="color:${colorGan};font-weight:600">${v.costoUnit != null ? Utils.formatMoney(gan) : '—'}</td>
             <td>${Utils.escHtml(nombreClienteVenta(v))}</td>
             <td><span class="badge badge-purple">${Utils.escHtml(v.metodo || 'Efectivo')}</span></td>
-            <td>
+            <td style="white-space:nowrap">
+              <button class="btn btn-sm btn-secondary btn-icon" onclick="comprobanteVenta('${v.id}')" title="Comprobante">🧾</button>
               <button class="btn btn-sm btn-danger btn-icon" onclick="eliminarVenta('${v.id}')" title="Eliminar">🗑</button>
             </td>
           </tr>`;
@@ -361,6 +362,190 @@ function eliminarVenta(id) {
     }
   );
 }
+
+// ─────────────────────────────────────────
+// VENTA RÁPIDA — para el mostrador, sin llenar el formulario largo
+// ─────────────────────────────────────────
+function ventaRapida() {
+  const recetas = DB.get('recetas', []);
+  if (!recetas.length) { toast('Primero creá una receta con su precio', 'warning'); return; }
+
+  const ventas  = DB.get('ventas', []);
+  const ultima  = ventas[ventas.length - 1];
+
+  // Los más vendidos primero: en el mostrador se repite casi siempre lo mismo
+  const conteo = {};
+  ventas.slice(-60).forEach(v => { if (v.recetaId) conteo[v.recetaId] = (conteo[v.recetaId] || 0) + 1; });
+  const ordenadas = recetas.slice().sort((a, b) => (conteo[b.id] || 0) - (conteo[a.id] || 0));
+
+  Modal.show('⚡ Venta rápida', `
+    ${ultima ? `
+      <button class="btn btn-secondary" style="width:100%;justify-content:center;margin-bottom:1rem"
+        onclick="repetirUltimaVenta()">
+        🔁 Repetir la última: ${Utils.escHtml(ultima.receta)} × ${ultima.cantidad} — ${Utils.formatMoney(ultima.total)}
+      </button>` : ''}
+
+    <label>Producto</label>
+    <div class="quick-grid" id="qrProductos">
+      ${ordenadas.map((r, i) => {
+        const disp = Stock.disponible(r.id);
+        return `<button class="quick-item ${i === 0 ? 'sel' : ''}" data-id="${r.id}" data-precio="${r.precioVenta || 0}"
+                  onclick="seleccionarProductoRapido(this)">
+          <span class="quick-nombre">${Utils.escHtml(r.nombre)}</span>
+          <span class="quick-precio">${r.precioVenta > 0 ? Utils.formatMoney(r.precioVenta) : 'sin precio'}</span>
+          <span class="quick-stock ${disp <= 0 ? 'cero' : ''}">${disp} en stock</span>
+        </button>`;
+      }).join('')}
+    </div>
+
+    <label style="margin-top:1rem">Cantidad</label>
+    <div class="quick-grid quick-cant">
+      ${[1, 2, 3, 6, 12, 24].map(n =>
+        `<button class="quick-item ${n === 1 ? 'sel' : ''}" data-cant="${n}" onclick="seleccionarCantidadRapida(this)">${n}</button>`
+      ).join('')}
+    </div>
+
+    <div class="form-row" style="margin-top:1rem">
+      <div class="form-group">
+        <label>Cantidad exacta</label>
+        <input type="number" id="qrCantidad" value="1" min="1" oninput="calcTotalRapido()" />
+      </div>
+      <div class="form-group">
+        <label>Precio por unidad</label>
+        <input type="number" id="qrPrecio" min="0" step="0.01" oninput="calcTotalRapido()" />
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Método de pago</label>
+      <select id="qrMetodo">
+        <option value="Efectivo">Efectivo</option>
+        <option value="Transferencia">Transferencia</option>
+        <option value="Débito">Débito</option>
+        <option value="Otro">Otro</option>
+      </select>
+    </div>
+    <div id="qrTotal" class="sim-result" style="margin-top:0"></div>
+  `, `<button class="btn btn-secondary" onclick="Modal.hide()">Cancelar</button>
+      <button class="btn btn-primary" onclick="guardarVentaRapida()">✅ Cobrar</button>`);
+
+  const primero = document.querySelector('#qrProductos .quick-item');
+  if (primero) seleccionarProductoRapido(primero);
+}
+window.ventaRapida = ventaRapida;
+
+function seleccionarProductoRapido(btn) {
+  document.querySelectorAll('#qrProductos .quick-item').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+  const precio = parseFloat(btn.dataset.precio) || 0;
+  const inp = document.getElementById('qrPrecio');
+  if (inp) inp.value = precio > 0 ? precio : '';
+  calcTotalRapido();
+}
+window.seleccionarProductoRapido = seleccionarProductoRapido;
+
+function seleccionarCantidadRapida(btn) {
+  document.querySelectorAll('.quick-cant .quick-item').forEach(b => b.classList.remove('sel'));
+  btn.classList.add('sel');
+  document.getElementById('qrCantidad').value = btn.dataset.cant;
+  calcTotalRapido();
+}
+window.seleccionarCantidadRapida = seleccionarCantidadRapida;
+
+function calcTotalRapido() {
+  const cant   = parseInt(document.getElementById('qrCantidad')?.value) || 0;
+  const precio = parseFloat(document.getElementById('qrPrecio')?.value) || 0;
+  const sel    = document.querySelector('#qrProductos .quick-item.sel');
+  const disp   = sel ? Stock.disponible(sel.dataset.id) : 0;
+  const el     = document.getElementById('qrTotal');
+  if (!el) return;
+
+  el.innerHTML = `
+    <div class="sim-row" style="font-size:1.15rem">
+      <span>Total a cobrar</span>
+      <span style="color:var(--teal)">${Utils.formatMoney(cant * precio)}</span>
+    </div>
+    ${cant > disp ? `<div style="color:var(--orange);font-size:0.82rem;margin-top:0.4rem">
+      ⚠️ Solo tenés ${disp} en stock: se va a registrar igual y el stock queda en negativo.
+    </div>` : ''}
+  `;
+}
+window.calcTotalRapido = calcTotalRapido;
+
+function guardarVentaRapida() {
+  const sel    = document.querySelector('#qrProductos .quick-item.sel');
+  const cant   = parseInt(document.getElementById('qrCantidad').value) || 0;
+  const precio = parseFloat(document.getElementById('qrPrecio').value) || 0;
+  const metodo = document.getElementById('qrMetodo').value;
+
+  if (!sel)        { toast('Elegí un producto', 'warning'); return; }
+  if (cant <= 0)   { toast('Poné la cantidad', 'warning'); return; }
+  if (precio <= 0) { toast('Poné el precio por unidad', 'warning'); return; }
+
+  const venta = registrarVenta({
+    recetaId: sel.dataset.id, cantidad: cant, precioUnit: precio,
+    fecha: Utils.today(), metodo, clienteId: null, cliente: '', obs: 'Venta rápida'
+  }, { silencioso: true });
+
+  Modal.hide();
+  toast(`Cobrado ${Utils.formatMoney(venta.total)} ✅`, 'success');
+  if (Router.current === 'ventas' || Router.current === 'dashboard') Router.refresh();
+  actualizarBadges();
+}
+window.guardarVentaRapida = guardarVentaRapida;
+
+function repetirUltimaVenta() {
+  const ventas = DB.get('ventas', []);
+  const u = ventas[ventas.length - 1];
+  if (!u) { toast('Todavía no hay ninguna venta', 'info'); return; }
+
+  const venta = registrarVenta({
+    recetaId: u.recetaId || '_libre', cantidad: u.cantidad, precioUnit: u.precioUnit,
+    fecha: Utils.today(), metodo: u.metodo, clienteId: null, cliente: '', obs: 'Repetida'
+  }, { silencioso: true });
+
+  Modal.hide();
+  toast(`Repetida: ${Utils.formatMoney(venta.total)} ✅`, 'success');
+  if (Router.current === 'ventas' || Router.current === 'dashboard') Router.refresh();
+  actualizarBadges();
+}
+window.repetirUltimaVenta = repetirUltimaVenta;
+
+// ─────────────────────────────────────────
+// COMPROBANTE
+// ─────────────────────────────────────────
+function comprobanteVenta(id) {
+  const v = DB.get('ventas', []).find(v => v.id === id);
+  if (!v) return;
+
+  const cfg = DB.get('config', DB.defaults.config);
+  const cliente = nombreClienteVenta(v);
+  const texto = [
+    `*${cfg.negocio}*`,
+    `Comprobante — ${Utils.formatDate(v.fecha)}`,
+    '',
+    `${v.receta} × ${v.cantidad}`,
+    `Precio unitario: ${Utils.formatMoney(v.precioUnit)}`,
+    '',
+    `TOTAL: ${Utils.formatMoney(v.total)}`,
+    `Pago: ${v.metodo || 'Efectivo'}`,
+    ...(cliente && cliente !== '—' ? ['', `Cliente: ${cliente}`] : []),
+    '',
+    '¡Gracias por tu compra! 🍫'
+  ].join('\n');
+
+  const cli = v.clienteId ? DB.get('clientes', []).find(c => c.id === v.clienteId) : null;
+  const num = cli?.telefono ? cli.telefono.replace(/[^\d]/g, '') : '';
+
+  Modal.show('🧾 Comprobante', `
+    <div class="form-group">
+      <label>Mandáselo al cliente</label>
+      <textarea id="shareTexto" rows="12" style="font-family:var(--font-body);resize:vertical">${Utils.escHtml(texto)}</textarea>
+    </div>
+  `, `<button class="btn btn-secondary" onclick="Modal.hide()">Cerrar</button>
+      <button class="btn btn-secondary" onclick="copiarResumen()">📋 Copiar</button>
+      <button class="btn btn-success" onclick="window.open('https://wa.me/${num}?text='+encodeURIComponent(document.getElementById('shareTexto').value),'_blank','noopener')">💬 WhatsApp</button>`);
+}
+window.comprobanteVenta = comprobanteVenta;
 
 window.abrirFormVenta           = abrirFormVenta;
 window.guardarVenta             = guardarVenta;

@@ -49,6 +49,10 @@
     <a class="nav-item" data-module="inventario" href="#inventario">
       <span class="nav-icon">📦</span><span class="nav-label">Inventario</span>
     </a>
+    <a class="nav-item" data-module="compras" href="#compras">
+      <span class="nav-icon">🛒</span><span class="nav-label">Qué comprar</span>
+      <span class="nav-badge" id="badgeCompras" hidden></span>
+    </a>
     <a class="nav-item" data-module="recetas" href="#recetas">
       <span class="nav-icon">📋</span><span class="nav-label">Recetas</span>
     </a>
@@ -113,6 +117,12 @@
   </div>
 </main>
 
+<!-- ===== VENTA RÁPIDA (botón flotante) ===== -->
+<button class="fab" id="fabVenta" onclick="ventaRapida()" title="Venta rápida" aria-label="Venta rápida">
+  <span class="fab-icon">⚡</span>
+  <span class="fab-label">Venta rápida</span>
+</button>
+
 <!-- ===== MODAL GLOBAL ===== -->
 <div class="modal-backdrop" id="modalBackdrop">
   <div class="modal" id="modal">
@@ -131,8 +141,10 @@
 <script src="js/app.js"></script>
 <script src="js/dashboard.js"></script>
 <script src="js/inventario.js"></script>
+<script src="js/compras.js"></script>
 <script src="js/recetas.js"></script>
 <script src="js/produccion.js"></script>
+<script src="js/costos.js"></script>
 <script src="js/clientes.js"></script>
 <script src="js/pedidos.js"></script>
 <script src="js/ventas.js"></script>

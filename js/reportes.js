@@ -41,6 +41,7 @@ function initReportes() {
     </div>
 
     ${renderAvisoRespaldo()}
+    ${renderCopiasAuto()}
 
     <div class="card" style="margin-bottom:1.2rem">
       <div class="card-title">💾 Respaldo de datos</div>
@@ -103,6 +104,77 @@ function renderAvisoRespaldo() {
     ✅ Último respaldo: <strong>${Utils.formatDate(ultimo)}</strong>${dias === 0 ? ' (hoy)' : ` (hace ${dias} día${dias === 1 ? '' : 's'})`}
   </div>`;
 }
+
+/**
+ * Copias internas: se guardan solas cada 2 días dentro del navegador.
+ * Sirven para deshacer un borrado, no para cambiar de teléfono — para eso
+ * hace falta el archivo exportado.
+ */
+function renderCopiasAuto() {
+  const copias = Respaldo.registros().slice().reverse();
+
+  return `
+    <div class="card" style="margin-bottom:1.2rem">
+      <div class="card-title">
+        🛟 Copias automáticas
+        <button class="btn btn-sm btn-secondary" style="margin-left:auto" onclick="crearCopiaAuto()">Guardar copia ahora</button>
+      </div>
+      <p style="color:var(--text-muted);font-size:0.87rem;margin-bottom:1rem">
+        La app guarda una copia sola cada ${Respaldo.DIAS_COPIA} días acá adentro. Te salva si borrás
+        algo sin querer, pero <strong>vive en este mismo navegador</strong>: para cambiar de teléfono
+        o si limpiás los datos del sitio, necesitás el archivo exportado de abajo.
+      </p>
+      ${copias.length === 0
+        ? `<div class="empty-state" style="padding:1.5rem"><div class="empty-icon">🛟</div>
+             <p>Todavía no hay copias. Se genera una sola apenas cargues datos.</p></div>`
+        : `<div class="table-wrap"><table>
+            <thead><tr><th>Fecha</th><th>Registros</th><th></th></tr></thead>
+            <tbody>
+              ${copias.map(c => {
+                const dias = Utils.diasEntre(c.dia, Utils.today());
+                return `<tr>
+                  <td><strong>${Utils.formatDate(c.dia)}</strong>
+                    <br><span style="font-size:0.78rem;color:var(--text-muted)">${dias === 0 ? 'hoy' : `hace ${dias} día${dias === 1 ? '' : 's'}`}</span></td>
+                  <td>${c.registros} registros</td>
+                  <td><button class="btn btn-sm btn-warning" onclick="restaurarCopiaAuto('${c.id}')">↩️ Restaurar</button></td>
+                </tr>`;
+              }).join('')}
+            </tbody>
+          </table></div>`}
+    </div>
+  `;
+}
+
+function crearCopiaAuto() {
+  if (Respaldo.crear(true)) {
+    toast('Copia guardada ✅', 'success');
+    initReportes();
+  } else {
+    toast('No hay datos para copiar todavía', 'info');
+  }
+}
+window.crearCopiaAuto = crearCopiaAuto;
+
+function restaurarCopiaAuto(id) {
+  const copia = Respaldo.registros().find(c => c.id === id);
+  if (!copia) return;
+  Modal.confirm(
+    `¿Volver a la copia del ${Utils.formatDate(copia.dia)} (${copia.registros} registros)? ` +
+    `Se reemplazan todos los datos actuales por los de esa fecha.`,
+    () => {
+      // Antes de pisar nada, guardar el estado de ahora por si se arrepiente
+      Respaldo.crear(true);
+      if (Respaldo.restaurar(id)) {
+        toast('Datos restaurados desde la copia ✅', 'success');
+        initReportes();
+      } else {
+        toast('No se pudo restaurar la copia', 'error');
+      }
+    },
+    'Sí, restaurar'
+  );
+}
+window.restaurarCopiaAuto = restaurarCopiaAuto;
 
 // ── Exportar JSON completo
 function exportarJSON() {

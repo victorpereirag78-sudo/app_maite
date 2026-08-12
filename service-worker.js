@@ -1,7 +1,7 @@
 // Service Worker — Alfajores Manager
 // Debe vivir en la raíz del sitio: desde js/ el scope quedaría limitado a /js/
 // y no podría controlar index.html.
-const CACHE_NAME = 'alfajores-v2.0.0';
+const CACHE_NAME = 'alfajores-v2.1.0';
 
 // Rutas RELATIVAS: con '/index.html' la app se rompía al publicarla
 // en una subcarpeta (ej. usuario.github.io/App_Maite/).
@@ -13,8 +13,10 @@ const ASSETS = [
   './js/app.js',
   './js/dashboard.js',
   './js/inventario.js',
+  './js/compras.js',
   './js/recetas.js',
   './js/produccion.js',
+  './js/costos.js',
   './js/ventas.js',
   './js/pedidos.js',
   './js/clientes.js',

@@ -766,6 +766,66 @@ textarea {
 .btn:disabled { opacity: 0.5; cursor: not-allowed; }
 .btn:disabled:hover { box-shadow: none; }
 
+/* ─────────────────────────────────────────
+   VENTA RÁPIDA
+───────────────────────────────────────── */
+.fab {
+  position: fixed;
+  right: 1.2rem;
+  bottom: 1.4rem;
+  z-index: 300;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.9rem 1.3rem;
+  border-radius: 99px;
+  background: linear-gradient(135deg, var(--pink), var(--orange));
+  color: #1c1208;
+  font-family: var(--font-body);
+  font-weight: 800;
+  font-size: 0.92rem;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.08) inset;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.fab:hover { transform: translateY(-2px); box-shadow: 0 10px 30px rgba(0,0,0,0.5); }
+.fab:active { transform: translateY(0); }
+.fab-icon { font-size: 1.15rem; line-height: 1; }
+
+/* Botonera de selección rápida */
+.quick-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+  gap: 0.5rem;
+}
+.quick-grid.quick-cant { grid-template-columns: repeat(auto-fill, minmax(58px, 1fr)); }
+.quick-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  padding: 0.65rem 0.5rem;
+  background: var(--surface2);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font-family: var(--font-body);
+  font-weight: 700;
+  font-size: 0.88rem;
+  text-align: center;
+  transition: all var(--transition);
+}
+.quick-item:hover { border-color: var(--pink); }
+.quick-item.sel {
+  background: var(--pink-glow);
+  border-color: var(--pink);
+  color: var(--pink);
+}
+.quick-nombre { font-size: 0.85rem; line-height: 1.2; }
+.quick-precio { font-size: 0.78rem; opacity: 0.85; }
+.quick-stock  { font-size: 0.7rem; color: var(--text-muted); font-weight: 600; }
+.quick-stock.cero { color: #ff4466; }
+
 /* SPINNER */
 .spinner {
   display: inline-block;
@@ -794,6 +854,13 @@ textarea {
   .stats-grid { grid-template-columns: repeat(2, 1fr); }
   .modal { max-height: 95vh; }
   .module-container { padding: 1rem 0.9rem; }
+  /* En el celular el botón queda redondo, para no tapar contenido */
+  .fab { padding: 0; width: 58px; height: 58px; justify-content: center; }
+  .fab-label { display: none; }
+  .fab-icon { font-size: 1.5rem; }
+  /* Que el botón flotante no tape la última fila */
+  .module-container { padding-bottom: 5.5rem; }
+  .toast-container { bottom: 5.5rem; }
 }
 
 @media (max-width: 380px) {
