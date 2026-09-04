@@ -94,6 +94,16 @@
     <button class="theme-toggle" id="themeToggle" title="Cambiar tema">
       <span id="themeIcon">☀️</span> <span id="themeLabel">Modo Claro</span>
     </button>
+
+    <button class="version-row" onclick="Actualizador.comprobar(true)" title="Buscar actualizaciones">
+      <span id="appVersion">v—</span>
+      <span class="version-check">Buscar actualización</span>
+    </button>
+
+    <a class="credito" href="https://www.armsistemas.cl" target="_blank" rel="noopener noreferrer">
+      Creado por <strong>ARM Sistemas</strong>
+      <span class="credito-url">www.armsistemas.cl</span>
+    </a>
   </div>
 </aside>
 
@@ -116,6 +126,19 @@
     <!-- Se carga dinámicamente -->
   </div>
 </main>
+
+<!-- ===== AVISO DE ACTUALIZACIÓN ===== -->
+<div class="update-banner" id="updateBanner" hidden>
+  <span class="update-icon">🎉</span>
+  <div class="update-texto">
+    <strong>Hay una versión nueva <span id="updateVersion"></span></strong>
+    <span id="updateNota"></span>
+  </div>
+  <div class="update-acciones">
+    <button class="btn btn-sm btn-secondary" onclick="Actualizador.posponer()">Después</button>
+    <button class="btn btn-sm btn-primary" onclick="Actualizador.aplicar()">Actualizar</button>
+  </div>
+</div>
 
 <!-- ===== VENTA RÁPIDA (botón flotante) ===== -->
 <button class="fab" id="fabVenta" onclick="ventaRapida()" title="Venta rápida" aria-label="Venta rápida">

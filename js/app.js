@@ -63,6 +63,181 @@ const DB = {
 };
 
 // ─────────────────────────────────────────
+// VERSIÓN Y ACTUALIZACIONES
+// ─────────────────────────────────────────
+/**
+ * Al subir cambios hay que tocar TRES cosas para que el aviso salga:
+ *   1. APP_VERSION acá abajo
+ *   2. "version" en version.json (es lo que consulta la app instalada)
+ *   3. CACHE_NAME en service-worker.js (para que el navegador baje los archivos nuevos)
+ */
+const APP_VERSION = '2.2.0';
+
+/** Compara "2.10.0" con "2.9.1" numéricamente; comparar como texto daría mal. */
+function compararVersiones(a, b) {
+  const pa = String(a || '0').split('.').map(n => parseInt(n) || 0);
+  const pb = String(b || '0').split('.').map(n => parseInt(n) || 0);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const d = (pa[i] || 0) - (pb[i] || 0);
+    if (d !== 0) return d > 0 ? 1 : -1;
+  }
+  return 0;
+}
+
+const Actualizador = {
+  HORAS: 24,              // cada cuánto se revisa
+  _registro: null,
+  _recargando: false,
+
+  /** ¿Ya pasaron 24 h desde la última revisión? */
+  _toca() {
+    const ultima = DB.get('ultimaRevisionVersion', 0);
+    return (Date.now() - ultima) > this.HORAS * 3600 * 1000;
+  },
+
+  /**
+   * Revisa si hay versión nueva.
+   * @param {boolean} manual  true si lo pidió la usuaria desde el botón:
+   *                          ignora el reloj de 24 h y avisa aunque esté al día.
+   */
+  async comprobar(manual = false) {
+    if (!manual && !this._toca()) return;
+    DB.set('ultimaRevisionVersion', Date.now());
+
+    // Que el navegador vuelva a bajar el service worker: si cambió, dispara
+    // 'updatefound' y el cartel aparece por esa vía.
+    try { await this._registro?.update(); } catch (e) { /* sin conexión */ }
+
+    let remota = null;
+    try {
+      remota = await this._leerVersionRemota();
+    } catch (e) {
+      if (manual) toast('No se pudo comprobar: revisá tu conexión', 'warning');
+      return;
+    }
+
+    if (remota && remota.version && compararVersiones(remota.version, APP_VERSION) > 0) {
+      this.mostrarCartel(remota);
+    } else if (manual) {
+      toast(`Estás en la última versión (${APP_VERSION}) ✅`, 'success');
+    }
+  },
+
+  /** Lee version.json salteando cachés (el ?t= evita proxies y CDN). */
+  async _leerVersionRemota() {
+    const r = await fetch('version.json?t=' + Date.now(), { cache: 'no-store' });
+    return r.ok ? await r.json() : null;
+  },
+
+  mostrarCartel(info = {}) {
+    const banner = document.getElementById('updateBanner');
+    if (!banner) return;
+    // Si la pospuso hace poco, no insistir en la misma sesión
+    if (banner.dataset.pospuesto === '1') return;
+
+    const ver = document.getElementById('updateVersion');
+    const nota = document.getElementById('updateNota');
+    if (ver)  ver.textContent = info.version ? 'v' + info.version : '';
+    if (nota) nota.textContent = info.notas || '';
+    banner.hidden = false;
+    // En el celular el cartel ocupa la misma esquina que el botón flotante
+    document.body.classList.add('hay-actualizacion');
+  },
+
+  ocultarCartel() {
+    const banner = document.getElementById('updateBanner');
+    if (banner) banner.hidden = true;
+    document.body.classList.remove('hay-actualizacion');
+  },
+
+  posponer() {
+    const banner = document.getElementById('updateBanner');
+    if (banner) banner.dataset.pospuesto = '1';
+    this.ocultarCartel();
+    toast('Listo, te aviso la próxima vez que abras la app', 'info');
+  },
+
+  /** Aplica la actualización: activa el SW que esperaba y recarga. */
+  async aplicar() {
+    if (this._recargando) return;
+    this._recargando = true;
+    this.ocultarCartel();
+    toast('Actualizando…', 'info', 8000);
+
+    try {
+      const reg = this._registro || await navigator.serviceWorker?.getRegistration();
+      if (reg?.waiting) {
+        // El SW nuevo está esperando: se le pide el relevo y al tomar el
+        // control se recarga (controllerchange).
+        reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+        setTimeout(() => location.reload(), 3000);   // red de seguridad
+        return;
+      }
+      // Sin SW esperando: se borran las cachés a mano y se recarga
+      if (window.caches) {
+        for (const k of await caches.keys()) await caches.delete(k);
+      }
+    } catch (e) {
+      console.warn('Actualizar:', e);
+    }
+    location.reload();
+  },
+
+  /** Engancha los avisos del service worker y arranca el reloj de 24 h. */
+  iniciar() {
+    const el = document.getElementById('appVersion');
+    if (el) el.textContent = 'v' + APP_VERSION;
+
+    if (!('serviceWorker' in navigator)) return;
+
+    navigator.serviceWorker.register('service-worker.js', { scope: './' })
+      .then(reg => {
+        this._registro = reg;
+
+        // Ya había una versión nueva esperando de una sesión anterior
+        if (reg.waiting && navigator.serviceWorker.controller) this.mostrarCartel();
+
+        // Se detectó una versión nueva mientras la app está abierta
+        reg.addEventListener('updatefound', () => {
+          const nuevo = reg.installing;
+          if (!nuevo) return;
+          nuevo.addEventListener('statechange', () => {
+            // Con controller ya presente = es una ACTUALIZACIÓN, no la
+            // primera instalación (ahí no hay que molestar con el cartel).
+            if (nuevo.state === 'installed' && navigator.serviceWorker.controller) {
+              // El service worker nuevo ya instalado ES la prueba de que hay
+              // versión nueva. Se lee version.json solo para poner el número
+              // y las notas en el cartel; si falla, el cartel sale igual.
+              this._leerVersionRemota()
+                .then(info => this.mostrarCartel(info || {}))
+                .catch(() => this.mostrarCartel({}));
+            }
+          });
+        });
+
+        this.comprobar();
+      })
+      .catch(err => console.warn('SW error:', err));
+
+    // Cuando el SW nuevo toma el control, recargar una sola vez
+    navigator.serviceWorker.addEventListener('controllerchange', () => {
+      if (this._recargando) return;
+      this._recargando = true;
+      location.reload();
+    });
+
+    // Revisar cada 24 h si la app queda abierta, y al volver a ella
+    setInterval(() => this.comprobar(), this.HORAS * 3600 * 1000);
+    document.addEventListener('visibilitychange', () => {
+      if (!document.hidden) this.comprobar();
+    });
+  }
+};
+window.Actualizador = Actualizador;
+window.APP_VERSION = APP_VERSION;
+window.compararVersiones = compararVersiones;
+
+// ─────────────────────────────────────────
 // RESPALDO AUTOMÁTICO
 // ─────────────────────────────────────────
 /**
@@ -843,12 +1018,8 @@ document.addEventListener('DOMContentLoaded', () => {
   // Copia interna automática + aviso si hace mucho no exporta
   Respaldo.alIniciar();
 
-  // Service Worker — ruta relativa para que también funcione en subcarpetas
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('service-worker.js', { scope: './' })
-      .then(() => console.log('SW registrado'))
-      .catch(err => console.warn('SW error:', err));
-  }
+  // Service Worker + control de versiones (revisa cada 24 h)
+  Actualizador.iniciar();
 
   // PWA Install
   let deferredPrompt = null;
